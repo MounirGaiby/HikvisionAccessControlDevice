@@ -12,7 +12,7 @@ import os
 CONFIG = {
     "username": "admin",
     "password": "admin",
-    "realm": "IP Camera(88888)",
+    "realm": "DS-2CD2342WD-I",
     "port": 443,
     "cert_file": "cert.pem",
     "key_file": "key.pem",
@@ -21,13 +21,13 @@ CONFIG = {
 
 DEVICE_INFO = '''<?xml version="1.0" encoding="UTF-8"?>
 <DeviceInfo>
-    <deviceName>Simulated Camera</deviceName>
+    <deviceName>Simulated Access Control Device</deviceName>
     <deviceID>66666</deviceID>
     <model>DS-2CD2342WD-I</model>
     <serialNumber>DS-2CD2342WD123456</serialNumber>
     <macAddress>11:22:33:44:55:66</macAddress>
     <firmwareVersion>V5.5.4</firmwareVersion>
-    <deviceType>IPCamera</deviceType>
+    <deviceType>AccessControlDevice</deviceType>
 </DeviceInfo>'''
 
 # Initialize hosts file
