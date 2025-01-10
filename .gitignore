@@ -1,0 +1,16 @@
+# SSL certificates
+*.pem
+
+# Data files
+hosts.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.env
+venv/
+
+# IDE
+.vscode/
+.idea/
