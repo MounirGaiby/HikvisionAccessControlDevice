@@ -37,8 +37,11 @@ Default configuration is in the `CONFIG` object in main.py:
 CONFIG = {
     "username": "admin",
     "password": "admin",
-    "realm": "IP Camera(88888)",
-    "port": 443
+    "realm": "DS-2CD2342WD-I",
+    "port": 443,
+    "cert_file": "cert.pem",
+    "key_file": "key.pem",
+    "hosts_file": "hosts.json"
 }
 ```
 
