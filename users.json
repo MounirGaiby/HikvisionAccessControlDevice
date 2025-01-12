@@ -1,0 +1,74 @@
+{
+  "users": [
+    {
+      "name": "ALICE JOHNSON",
+      "cardNo": "1953862610",
+      "employeeNoString": "1001",
+      "lastEventType": "checkOut",
+      "lastEventTime": "2025-01-12T11:33:36.028866Z"
+    },
+    {
+      "name": "EDWARD DAVIS",
+      "cardNo": "1953862611",
+      "employeeNoString": "1002",
+      "lastEventType": "checkOut",
+      "lastEventTime": "2025-01-12T11:33:06.016729Z"
+    },
+    {
+      "name": "CHARLIE MILLER",
+      "cardNo": "1953862612",
+      "employeeNoString": "1003",
+      "lastEventType": "checkIn",
+      "lastEventTime": "2025-01-11T18:06:24.227885Z"
+    },
+    {
+      "name": "BOB MILLER",
+      "cardNo": "1953862613",
+      "employeeNoString": "1004",
+      "lastEventType": "overtimeIn",
+      "lastEventTime": "2025-01-11T17:57:39.228670Z"
+    },
+    {
+      "name": "CHARLIE MILLER",
+      "cardNo": "1953862614",
+      "employeeNoString": "1005",
+      "lastEventType": null,
+      "lastEventTime": null
+    },
+    {
+      "name": "JOHN JONES",
+      "cardNo": "1953862615",
+      "employeeNoString": "1006",
+      "lastEventType": null,
+      "lastEventTime": null
+    },
+    {
+      "name": "ALICE JOHNSON",
+      "cardNo": "1953862616",
+      "employeeNoString": "1007",
+      "lastEventType": null,
+      "lastEventTime": null
+    },
+    {
+      "name": "EDWARD JONES",
+      "cardNo": "1953862617",
+      "employeeNoString": "1008",
+      "lastEventType": null,
+      "lastEventTime": null
+    },
+    {
+      "name": "ALICE JONES",
+      "cardNo": "1953862618",
+      "employeeNoString": "1009",
+      "lastEventType": null,
+      "lastEventTime": null
+    },
+    {
+      "name": "DIANA GARCIA",
+      "cardNo": "1953862619",
+      "employeeNoString": "1010",
+      "lastEventType": null,
+      "lastEventTime": null
+    }
+  ]
+}

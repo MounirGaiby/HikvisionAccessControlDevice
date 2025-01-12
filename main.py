@@ -5,9 +5,10 @@ import ssl
 import json
 import xml.etree.ElementTree as ET
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 import random
 import os
+import threading
 
 CONFIG = {
     "username": "admin",
@@ -16,7 +17,8 @@ CONFIG = {
     "port": 443,
     "cert_file": "cert.pem",
     "key_file": "key.pem",
-    "hosts_file": "hosts.json"
+    "hosts_file": "hosts.json",
+    "users_file": "users.json"
 }
 
 DEVICE_INFO = '''<?xml version="1.0" encoding="UTF-8"?>
@@ -28,59 +30,47 @@ DEVICE_INFO = '''<?xml version="1.0" encoding="UTF-8"?>
     <macAddress>11:22:33:44:55:66</macAddress>
     <firmwareVersion>V5.5.4</firmwareVersion>
     <deviceType>AccessControlDevice</deviceType>
-</DeviceInfo>'''
+</DeviceInfo>
+'''
 
-# Initialize hosts file
-if not os.path.exists(CONFIG["hosts_file"]):
-    with open(CONFIG["hosts_file"], "w") as f:
-        json.dump({"hosts": []}, f)
+# Event minor types
+ACS_EVENT_MINORS = [1, 2, 38, 40, 43, 46, 69, 72, 75, 77, 101, 153, 179, 181]
+event_sender = None
 
-def load_hosts():
-    with open(CONFIG["hosts_file"], "r") as f:
-        return json.load(f)
+# Initialize files
+for file_name in [CONFIG["hosts_file"], CONFIG["users_file"]]:
+    if not os.path.exists(file_name):
+        with open(file_name, "w") as f:
+            json.dump({"hosts": [] if file_name == CONFIG["hosts_file"] else [], 
+                      "users": [] if file_name == CONFIG["users_file"] else []}, f)
 
-def save_hosts(hosts_data):
-    with open(CONFIG["hosts_file"], "w") as f:
-        json.dump(hosts_data, f)
-
-def generate_random_event():
-    names = ["JOHN DOE", "JANE SMITH", "ALICE BROWN", "BOB WILSON"]
-    card_numbers = ["1953862610", "1953862611", "1953862612", "1953862613"]
-    
-    return {
-        "ipAddress": "192.168.171.112",
-        "portNo": 443,
-        "protocol": "HTTPS",
-        "macAddress": ":".join([format(random.randint(0, 255), '02x') for _ in range(6)]),
-        "channelID": 1,
-        "dateTime": datetime.now().strftime("%Y-%m-%dT%H:%M:%S+01:00"),
-        "activePostCount": random.randint(1, 10),
-        "eventType": "AccessControllerEvent",
-        "eventState": "active",
-        "eventDescription": "Access Controller Event",
-        "deviceID": "1",
-        "AccessControllerEvent": {
-            "deviceName": "Access Controller",
-            "majorEventType": 5,
-            "subEventType": 1,
-            "cardNo": random.choice(card_numbers),
-            "cardType": 1,
-            "name": random.choice(names),
-            "cardReaderKind": 1,
-            "cardReaderNo": 1,
-            "employeeNoString": str(random.randint(1, 100)),
-            "serialNo": random.randint(1000, 2000),
-            "userType": "normal",
-            "currentVerifyMode": "cardOrFaceOrFp",
-            "currentEvent": True,
-            "frontSerialNo": random.randint(1000, 2000),
-            "attendanceStatus": random.choice(["checkIn", "checkOut"]),
-            "label": random.choice(["Check In", "Check Out"]),
-            "statusValue": 0,
-            "mask": "unknown",
-            "purePwdVerifyEnable": True
-        }
-    }
+class EventSender:
+    def __init__(self):
+        self.timer = None
+        self.running = False
+        
+    def start(self):
+        self.running = True
+        self.schedule_next_event()
+        
+    def stop(self):
+        self.running = False
+        if self.timer:
+            self.timer.cancel()
+            
+    def schedule_next_event(self):
+        if not self.running:
+            return
+        
+        send_event_to_hosts()
+        self.timer = threading.Timer(30.0, self.schedule_next_event)
+        self.timer.start()
+        
+    def trigger_manual_event(self):
+        if self.timer:
+            self.timer.cancel()
+        send_event_to_hosts()
+        self.schedule_next_event()
 
 class HikvisionHandler(BaseHTTPRequestHandler):
     def generate_nonce(self):
@@ -111,14 +101,7 @@ class HikvisionHandler(BaseHTTPRequestHandler):
                 key, value = item.split('=', 1)
                 auth_params[key.strip()] = value.strip(' "')
 
-        print(f"DEBUG: Auth params received: {auth_params}")
-        print(f"DEBUG: Request path: {self.path}")
-        print(f"DEBUG: Request command: {self.command}")
-
         ha1 = md5(f"{CONFIG['username']}:{CONFIG['realm']}:{CONFIG['password']}".encode()).hexdigest()
-        
-        # Use auth_params['uri'] instead of self.path for ha2 calculation
-        # This is because the client includes the query parameters in the uri
         ha2 = md5(f"{self.command}:{auth_params.get('uri', self.path)}".encode()).hexdigest()
         
         if 'qop' in auth_params:
@@ -126,9 +109,6 @@ class HikvisionHandler(BaseHTTPRequestHandler):
                          f"{auth_params['cnonce']}:auth:{ha2}".encode()).hexdigest()
         else:
             response = md5(f"{ha1}:{auth_params['nonce']}:{ha2}".encode()).hexdigest()
-
-        print(f"DEBUG: Expected response: {response}")
-        print(f"DEBUG: Received response: {auth_params.get('response', '')}")
         
         return response == auth_params.get('response', '')
 
@@ -154,28 +134,21 @@ class HikvisionHandler(BaseHTTPRequestHandler):
         elif self.path == '/ISAPI/System/deviceInfo':
             self.send_response(200)
             self.send_header('Content-Type', 'application/xml')
-            self.send_header('Content-Length', str(len(DEVICE_INFO)))
             self.end_headers()
             self.wfile.write(DEVICE_INFO.encode())
         elif self.path.startswith('/ISAPI/AccessControl/UserInfo/Count'):
-            try:
-                user_count = {
-                    "UserInfoCount": {
-                        "userNumber": random.randint(1, 1000)
-                    }
+            users_data = load_users()
+            user_count = {
+                "UserInfoCount": {
+                    "userNumber": len(users_data.get('users', []))
                 }
-                
-                self.send_response(200)
-                self.send_header('Content-Type', 'application/json')
-                response_data = json.dumps(user_count)
-                self.send_header('Content-Length', str(len(response_data.encode())))
-                self.end_headers()
-                self.wfile.write(response_data.encode())
-                
-            except Exception as e:
-                print(f"DEBUG: Error in UserInfo/Count: {str(e)}")
-                self.send_response(500)
-                self.end_headers()
+            }
+            response_data = json.dumps(user_count)
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(response_data)))
+            self.end_headers()
+            self.wfile.write(response_data.encode())
         else:
             self.send_response(404)
             self.end_headers()
@@ -192,57 +165,49 @@ class HikvisionHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         auth_header = self.headers.get('Authorization')
-        if not auth_header or not self.validate_auth(auth_header[7:]):
+
+        # Move auth check before any path handling
+        if not auth_header and self.path != '/trigger-event':
+            return self.send_digest_auth_request()
+        
+        if not auth_header or (auth_header and not auth_header.startswith('Digest ')) and self.path != '/trigger-event':
             return self.send_digest_auth_request()
 
-        if self.path == '/ISAPI/event/notification/httpHosts':
+        if auth_header and not self.validate_auth(auth_header[7:]) and self.path != '/trigger-event':
+            return self.send_digest_auth_request()
+
+        # Now handle paths
+        if self.path == '/trigger-event':
+            if event_sender:
+                event_sender.trigger_manual_event()
+            self.send_response(200)
+            self.end_headers()
+            return
+        elif self.path.startswith('/ISAPI/event/notification/httpHosts/') and self.path.endswith('/test'):
+            # Host testing endpoint
+            host_id = self.path.split('/')[-2]
+            hosts_data = load_hosts()
+            host = next((h for h in hosts_data['hosts'] if h['id'] == host_id), None)
+                
+            if host:
+                # Just return 200 for test
+                self.send_response(200)
+                self.end_headers()
+            else:
+                self.send_response(404)
+                self.end_headers()
+            return
+        elif self.path == '/ISAPI/event/notification/httpHosts':
             content_length = int(self.headers.get('Content-Length', 0))
             post_data = self.rfile.read(content_length).decode('utf-8')
             
             hosts_data = load_hosts()
             new_host = self.parse_host_xml(post_data)
-            # Keep any existing ID or use the one provided
             hosts_data['hosts'].append(new_host)
             save_hosts(hosts_data)
             
             self.send_response(200)
             self.end_headers()
-
-        elif self.path.startswith('/ISAPI/event/notification/httpHosts/') and self.path.endswith('/test'):
-            host_id = self.path.split('/')[-2]
-            hosts_data = load_hosts()
-            host = next((h for h in hosts_data['hosts'] if h['id'] == host_id), None)
-            
-            if host:
-                try:
-                    protocol = host['protocolType'].lower()
-                    port = host['portNo']
-                    ip = host['ipAddress']
-                    url = f"{protocol}://{ip}:{port}{host['url']}"
-                    
-                    print(f"Testing URL: {url}")
-                    
-                    headers = {'Content-Type': 'application/json' if host['parameterFormatType'] == 'JSON' else 'application/xml'}
-                    
-                    response = requests.get(
-                        url, 
-                        headers=headers,
-                        verify=False,
-                        timeout=5
-                    )
-                    
-                    print(f"Response status: {response.status_code}")
-                    
-                    if response.status_code == 200:
-                        self.send_response(200)
-                        self.end_headers()
-                    else:
-                        self.send_error_response()
-                except Exception as e:
-                    print(f"Error: {str(e)}")
-                    self.send_error_response()
-            else:
-                self.send_error_response()
 
     def create_hosts_list_xml(self, hosts):
         root = ET.Element('HttpHostNotificationList')
@@ -264,17 +229,140 @@ class HikvisionHandler(BaseHTTPRequestHandler):
             host_data[child.tag] = child.text
         return host_data
 
-    def send_error_response(self):
-        root = ET.Element('HttpHostTestResult')
-        root.set('version', '2.0')
-        root.set('xmlns', 'http://www.isapi.org/ver20/XMLSchema')
-        error = ET.SubElement(root, 'errorDescription')
-        error.text = "Failed to connect to host"
+def load_users():
+    try:
+        with open(CONFIG["users_file"], "r") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {"users": []}
+
+def save_users(users_data):
+    with open(CONFIG["users_file"], "w") as f:
+        json.dump(users_data, f, indent=2)
+
+def load_hosts():
+    try:
+        with open(CONFIG["hosts_file"], "r") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {"hosts": []}
+
+def save_hosts(hosts_data):
+    with open(CONFIG["hosts_file"], "w") as f:
+        json.dump(hosts_data, f, indent=2)
+
+def get_next_event_type(last_event):
+    event_flow = {
+        None: "checkIn",
+        "checkIn": "breakOut",
+        "breakOut": "breakIn",
+        "breakIn": "checkOut",
+        "checkOut": "overtimeIn",
+        "overtimeIn": "overtimeOut",
+        "overtimeOut": "checkIn"
+    }
+    return event_flow.get(last_event, "checkIn")
+
+def is_user_eligible_for_next_event(user):
+    if not user['lastEventTime']:
+        return True
         
-        self.send_response(200)
-        self.send_header('Content-Type', 'application/xml')
-        self.end_headers()
-        self.wfile.write(ET.tostring(root))
+    last_event_time = datetime.fromisoformat(user['lastEventTime'].replace('Z', '+00:00'))
+    current_time = datetime.now(timezone.utc)
+    
+    return (current_time - last_event_time).total_seconds() > 60
+
+def generate_event():
+    users_data = load_users()
+    eligible_user = None
+    
+    for user in users_data['users']:
+        if is_user_eligible_for_next_event(user):
+            eligible_user = user
+            break
+    
+    if not eligible_user:
+        for user in users_data['users']:
+            user['lastEventType'] = None
+            user['lastEventTime'] = None
+        eligible_user = users_data['users'][0]
+    
+    next_event = get_next_event_type(eligible_user['lastEventType'])
+    eligible_user['lastEventType'] = next_event
+    eligible_user['lastEventTime'] = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+    save_users(users_data)
+    
+    return {
+        "ipAddress": "192.168.171.112",
+        "portNo": 443,
+        "protocol": "HTTPS",
+        "macAddress": ":".join([format(random.randint(0, 255), '02x') for _ in range(6)]),
+        "channelID": 1,
+        "dateTime": datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
+        "activePostCount": random.randint(1, 10),
+        "eventType": "AccessControllerEvent",
+        "eventState": "active",
+        "eventDescription": "Access Controller Event",
+        "deviceID": "66666",
+        "AccessControllerEvent": {
+            "deviceName": "Access Controller",
+            "majorEventType": 5,
+            "subEventType": random.choice(ACS_EVENT_MINORS),
+            "cardNo": eligible_user['cardNo'],
+            "cardType": 1,
+            "name": eligible_user['name'],
+            "cardReaderKind": 1,
+            "cardReaderNo": 1,
+            "employeeNoString": eligible_user['employeeNoString'],
+            "serialNo": random.randint(1000, 2000),
+            "userType": "normal",
+            "currentVerifyMode": "cardOrFaceOrFp",
+            "currentEvent": True,
+            "frontSerialNo": random.randint(1000, 2000),
+            "attendanceStatus": next_event,
+            "statusValue": 0,
+            "mask": "unknown",
+            "purePwdVerifyEnable": True
+        }
+    }
+
+def send_event_to_hosts():
+    hosts_data = load_hosts()
+    event = generate_event()
+    
+    for host in hosts_data.get('hosts', []):
+        try:
+            protocol = host['protocolType'].lower()
+            port = host['portNo']
+            ip = host['ipAddress']
+            url = f"{protocol}://{ip}:{port}{host['url']}"
+            
+            headers = {'Content-Type': 'application/json' if host['parameterFormatType'] == 'JSON' else 'application/xml'}
+            
+            requests.post(
+                url,
+                json=event if host['parameterFormatType'] == 'JSON' else None,
+                data=ET.tostring(dict_to_xml(event)) if host['parameterFormatType'] != 'JSON' else None,
+                headers=headers,
+                verify=False,
+                timeout=5
+            )
+            print(f"Event sent to {url}")
+            
+        except Exception as e:
+            print(f"Error sending event to host {host['id']}: {str(e)}")
+
+def dict_to_xml(d):
+    root = ET.Element('EventNotificationAlert')
+    def _to_xml(d, parent):
+        for key, value in d.items():
+            child = ET.SubElement(parent, str(key))
+            if isinstance(value, dict):
+                _to_xml(value, child)
+            else:
+                child.text = str(value)
+    _to_xml(d, root)
+    return root
 
 def run_server():
     server = HTTPServer(('', CONFIG['port']), HikvisionHandler)
@@ -291,4 +379,6 @@ def run_server():
         server.server_close()
 
 if __name__ == '__main__':
+    event_sender = EventSender()
+    event_sender.start()
     run_server()
